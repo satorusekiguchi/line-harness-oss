@@ -64,7 +64,15 @@ export function AccountProvider({ children }: { children: ReactNode }) {
             // localStorage unavailable
           }
           const valid = stored && list.some((a) => a.id === stored)
-          return valid ? stored : list[0].id
+          if (valid) return stored
+          // Prefer nude/ヌード account as default
+          const nudeAccount = list.find(
+            (a) =>
+              a.name?.toLowerCase().includes('nude') ||
+              a.name?.includes('ヌード') ||
+              a.displayName?.toLowerCase().includes('nude')
+          )
+          return (nudeAccount ?? list[0]).id
         })
       } else {
         setAccounts([])

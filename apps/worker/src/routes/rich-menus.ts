@@ -1,16 +1,39 @@
 import { Hono } from 'hono';
 import { LineClient } from '@line-crm/line-sdk';
-import { getFriendById } from '@line-crm/db';
+import { getFriendById, getLineAccountById, getRichMenuConfigs, upsertRichMenuConfig, deleteRichMenuConfig } from '@line-crm/db';
 import type { Env } from '../index.js';
 
 const richMenus = new Hono<Env>();
 
-// GET /api/rich-menus — list all rich menus from LINE API
+/** マルチアカウント対応: lineAccountId パラメータからアクセストークンを解決 */
+async function resolveAccessToken(c: Parameters<Parameters<typeof richMenus.get>[1]>[0]): Promise<string> {
+  const accountId = c.req.query('lineAccountId');
+  if (accountId) {
+    const account = await getLineAccountById(c.env.DB, accountId);
+    if (account?.channel_access_token) return account.channel_access_token;
+  }
+  return c.env.LINE_CHANNEL_ACCESS_TOKEN;
+}
+
+// GET /api/rich-menus — list all rich menus from LINE API + configs from DB
 richMenus.get('/api/rich-menus', async (c) => {
   try {
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
     const result = await lineClient.getRichMenuList();
-    return c.json({ success: true, data: result.richmenus ?? [] });
+    const richMenuList = result.richmenus ?? [];
+
+    // DB のエイリアス設定をマージ
+    const accountId = c.req.query('lineAccountId') ?? null;
+    const configs = await getRichMenuConfigs(c.env.DB, accountId);
+    const configMap = new Map(configs.map((cfg) => [cfg.rich_menu_id, cfg]));
+
+    const data = richMenuList.map((menu) => ({
+      ...menu,
+      config: configMap.get(menu.richMenuId) ?? null,
+    }));
+
+    return c.json({ success: true, data });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('GET /api/rich-menus error:', message);
@@ -21,9 +44,20 @@ richMenus.get('/api/rich-menus', async (c) => {
 // POST /api/rich-menus — create a rich menu via LINE API
 richMenus.post('/api/rich-menus', async (c) => {
   try {
-    const body = await c.req.json();
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
-    const result = await lineClient.createRichMenu(body);
+    const body = await c.req.json<Record<string, unknown>>();
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
+    const result = await lineClient.createRichMenu(body as Parameters<typeof lineClient.createRichMenu>[0]);
+
+    // DB にエイリアスを保存
+    const accountId = c.req.query('lineAccountId') ?? null;
+    const name = typeof body.name === 'string' ? body.name : 'リッチメニュー';
+    await upsertRichMenuConfig(c.env.DB, {
+      richMenuId: result.richMenuId,
+      lineAccountId: accountId,
+      name,
+    });
+
     return c.json({ success: true, data: result }, 201);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -36,8 +70,13 @@ richMenus.post('/api/rich-menus', async (c) => {
 richMenus.delete('/api/rich-menus/:id', async (c) => {
   try {
     const richMenuId = c.req.param('id');
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
     await lineClient.deleteRichMenu(richMenuId);
+
+    // DB のエイリアスも削除
+    await deleteRichMenuConfig(c.env.DB, richMenuId);
+
     return c.json({ success: true, data: null });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -50,8 +89,14 @@ richMenus.delete('/api/rich-menus/:id', async (c) => {
 richMenus.post('/api/rich-menus/:id/default', async (c) => {
   try {
     const richMenuId = c.req.param('id');
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
     await lineClient.setDefaultRichMenu(richMenuId);
+
+    // DB の is_default フラグを更新
+    const accountId = c.req.query('lineAccountId') ?? null;
+    await upsertRichMenuConfig(c.env.DB, { richMenuId, lineAccountId: accountId, isDefault: true });
+
     return c.json({ success: true, data: null });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -76,7 +121,8 @@ richMenus.post('/api/friends/:friendId/rich-menu', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
     await lineClient.linkRichMenuToUser(friend.line_user_id, body.richMenuId);
 
     return c.json({ success: true, data: null });
@@ -98,7 +144,8 @@ richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
       return c.json({ success: false, error: 'Friend not found' }, 404);
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
     await lineClient.unlinkRichMenuFromUser(friend.line_user_id);
 
     return c.json({ success: true, data: null });
@@ -108,8 +155,6 @@ richMenus.delete('/api/friends/:friendId/rich-menu', async (c) => {
     return c.json({ success: false, error: `Failed to unlink rich menu from friend: ${message}` }, 500);
   }
 });
-
-export { richMenus };
 
 // POST /api/rich-menus/:id/image — upload rich menu image (accepts base64 body or binary)
 richMenus.post('/api/rich-menus/:id/image', async (c) => {
@@ -121,12 +166,10 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
     let imageContentType: 'image/png' | 'image/jpeg' = 'image/png';
 
     if (contentType.includes('application/json')) {
-      // Accept base64 encoded image in JSON body
       const body = await c.req.json<{ image: string; contentType?: string }>();
       if (!body.image) {
         return c.json({ success: false, error: 'image (base64) is required' }, 400);
       }
-      // Strip data URI prefix if present
       const base64 = body.image.replace(/^data:image\/\w+;base64,/, '');
       const binaryString = atob(base64);
       const bytes = new Uint8Array(binaryString.length);
@@ -136,14 +179,14 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
       imageData = bytes.buffer;
       if (body.contentType === 'image/jpeg') imageContentType = 'image/jpeg';
     } else if (contentType.includes('image/')) {
-      // Accept raw binary upload
       imageData = await c.req.arrayBuffer();
       imageContentType = contentType.includes('jpeg') || contentType.includes('jpg') ? 'image/jpeg' : 'image/png';
     } else {
       return c.json({ success: false, error: 'Content-Type must be application/json (with base64) or image/png or image/jpeg' }, 400);
     }
 
-    const lineClient = new LineClient(c.env.LINE_CHANNEL_ACCESS_TOKEN);
+    const token = await resolveAccessToken(c);
+    const lineClient = new LineClient(token);
     await lineClient.uploadRichMenuImage(richMenuId, imageData, imageContentType);
 
     return c.json({ success: true, data: null });
@@ -153,3 +196,28 @@ richMenus.post('/api/rich-menus/:id/image', async (c) => {
     return c.json({ success: false, error: `Failed to upload rich menu image: ${message}` }, 500);
   }
 });
+
+// PATCH /api/rich-menus/:id/config — update rich menu config (name, description, target_segment)
+richMenus.patch('/api/rich-menus/:id/config', async (c) => {
+  try {
+    const richMenuId = c.req.param('id');
+    const body = await c.req.json<{ name?: string; description?: string; targetSegment?: string }>();
+    const accountId = c.req.query('lineAccountId') ?? null;
+
+    await upsertRichMenuConfig(c.env.DB, {
+      richMenuId,
+      lineAccountId: accountId,
+      name: body.name,
+      description: body.description,
+      targetSegment: body.targetSegment,
+    });
+
+    return c.json({ success: true, data: null });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('PATCH /api/rich-menus/:id/config error:', message);
+    return c.json({ success: false, error: `Failed to update rich menu config: ${message}` }, 500);
+  }
+});
+
+export { richMenus };

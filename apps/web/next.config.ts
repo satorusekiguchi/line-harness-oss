@@ -1,6 +1,6 @@
 import type { NextConfig } from 'next'
 const nextConfig: NextConfig = {
-  output: 'export',
   transpilePackages: ['@line-crm/shared'],
+  devIndicators: false,
 }
 export default nextConfig

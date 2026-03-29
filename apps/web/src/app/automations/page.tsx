@@ -9,8 +9,14 @@ import CcPromptButton from '@/components/cc-prompt-button'
 type AutomationEventType = "friend_add" | "tag_change" | "score_threshold" | "cv_fire" | "message_received" | "calendar_booked"
 
 interface AutomationAction {
-  type: "add_tag" | "remove_tag" | "start_scenario" | "send_message" | "send_webhook" | "switch_rich_menu"
+  type: "add_tag" | "remove_tag" | "start_scenario" | "send_message" | "send_webhook" | "switch_rich_menu" | "remove_rich_menu"
   params: Record<string, unknown>
+}
+
+interface RichMenuEntry {
+  richMenuId: string
+  name: string
+  config?: { name?: string; target_segment?: string } | null
 }
 
 interface Automation {
@@ -62,6 +68,13 @@ interface CreateFormState {
   priority: number
 }
 
+const SEGMENT_LABELS: Record<string, string> = {
+  teaser: 'ティザー期',
+  non_purchaser: '未購入者',
+  purchaser: '購入者',
+  subscriber: '定期購入者',
+}
+
 const initialForm: CreateFormState = {
   name: '',
   description: '',
@@ -70,6 +83,31 @@ const initialForm: CreateFormState = {
   conditionsJson: '{}',
   priority: 0,
 }
+
+/** switch_rich_menu アクション用プリセット */
+const RICH_MENU_ACTION_PRESETS = [
+  {
+    label: '友だち追加時 → ティザー期メニューに切替',
+    eventType: 'friend_add' as AutomationEventType,
+    actions: [{ type: 'switch_rich_menu', params: { richMenuId: '' } }],
+    conditions: {},
+    description: '友だち追加イベント発生時にティザー期のリッチメニューを設定します',
+  },
+  {
+    label: '購入タグ付与時 → 購入者メニューに切替',
+    eventType: 'tag_change' as AutomationEventType,
+    actions: [{ type: 'switch_rich_menu', params: { richMenuId: '' } }],
+    conditions: { tagName: '購入済み', action: 'add' },
+    description: '購入済みタグが付与されたユーザーのリッチメニューを購入者用に切替します',
+  },
+  {
+    label: '定期購入タグ付与時 → 定期会員メニューに切替',
+    eventType: 'tag_change' as AutomationEventType,
+    actions: [{ type: 'switch_rich_menu', params: { richMenuId: '' } }],
+    conditions: { tagName: '定期購入', action: 'add' },
+    description: '定期購入タグが付与されたユーザーのリッチメニューを定期会員用に切替します',
+  },
+]
 
 const ccPrompts = [
   {
@@ -99,6 +137,8 @@ export default function AutomationsPage() {
   const [form, setForm] = useState<CreateFormState>({ ...initialForm })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [richMenus, setRichMenus] = useState<RichMenuEntry[]>([])
+  const [selectedPresetIdx, setSelectedPresetIdx] = useState<number | null>(null)
 
   const loadAutomations = useCallback(async () => {
     setLoading(true)
@@ -120,6 +160,17 @@ export default function AutomationsPage() {
   useEffect(() => {
     loadAutomations()
   }, [loadAutomations])
+
+  // リッチメニュー一覧を取得（switch_rich_menu アクションのセレクト用）
+  useEffect(() => {
+    const fetchMenus = async () => {
+      try {
+        const res = await api.richMenus.list({ accountId: selectedAccountId || undefined })
+        if (res.success) setRichMenus(res.data as RichMenuEntry[])
+      } catch { /* ignore */ }
+    }
+    fetchMenus()
+  }, [selectedAccountId])
 
   const handleCreate = async () => {
     if (!form.name.trim()) {
@@ -212,6 +263,62 @@ export default function AutomationsPage() {
       {showCreate && (
         <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-sm font-semibold text-gray-800 mb-4">新規オートメーションを作成</h2>
+
+          {/* リッチメニュー切替プリセット */}
+          <div className="mb-5 p-4 bg-blue-50 rounded-lg border border-blue-100">
+            <p className="text-xs font-semibold text-blue-700 mb-3">🎯 リッチメニュー切替プリセット</p>
+            <div className="space-y-2">
+              {RICH_MENU_ACTION_PRESETS.map((preset, idx) => (
+                <div key={idx} className={`p-3 rounded-lg border cursor-pointer transition-colors ${selectedPresetIdx === idx ? 'border-blue-500 bg-white' : 'border-blue-200 bg-white/60 hover:bg-white'}`}
+                  onClick={() => {
+                    setSelectedPresetIdx(idx)
+                    setForm({
+                      ...form,
+                      name: form.name || preset.label,
+                      description: form.description || preset.description,
+                      eventType: preset.eventType,
+                      actionsJson: JSON.stringify(preset.actions, null, 2),
+                      conditionsJson: JSON.stringify(preset.conditions, null, 2),
+                    })
+                  }}
+                >
+                  <p className="text-xs font-medium text-gray-800">{preset.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{preset.description}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* リッチメニューが選択されている場合、セレクトを表示 */}
+            {selectedPresetIdx !== null && (
+              <div className="mt-3 p-3 bg-white rounded-lg border border-blue-200">
+                <label className="block text-xs font-medium text-blue-700 mb-2">
+                  適用するリッチメニューを選択
+                </label>
+                {richMenus.length === 0 ? (
+                  <p className="text-xs text-gray-400">リッチメニューがありません。先にリッチメニュー管理ページで作成してください。</p>
+                ) : (
+                  <select
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={(e) => {
+                      const richMenuId = e.target.value
+                      const actions = [{ type: 'switch_rich_menu', params: { richMenuId } }]
+                      setForm({ ...form, actionsJson: JSON.stringify(actions, null, 2) })
+                    }}
+                  >
+                    <option value="">-- リッチメニューを選択 --</option>
+                    {richMenus.map((m) => (
+                      <option key={m.richMenuId} value={m.richMenuId}>
+                        {m.config?.name ?? m.name}
+                        {m.config?.target_segment ? ` (${SEGMENT_LABELS[m.config.target_segment] ?? m.config.target_segment})` : ''}
+                        {' '}— {m.richMenuId.slice(0, 20)}...
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="space-y-4 max-w-lg">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">ルール名 <span className="text-red-500">*</span></label>
@@ -246,11 +353,14 @@ export default function AutomationsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">アクション (JSON)</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                アクション (JSON)
+                <span className="ml-2 font-normal text-gray-400">— switch_rich_menu の場合は上のセレクトで選択できます</span>
+              </label>
               <textarea
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
                 rows={6}
-                placeholder='[{"type": "add_tag", "params": {"tagId": "..."}}]'
+                placeholder='[{"type": "switch_rich_menu", "params": {"richMenuId": "..."}}]'
                 value={form.actionsJson}
                 onChange={(e) => setForm({ ...form, actionsJson: e.target.value })}
               />
@@ -287,7 +397,7 @@ export default function AutomationsPage() {
                 {saving ? '作成中...' : '作成'}
               </button>
               <button
-                onClick={() => { setShowCreate(false); setFormError('') }}
+                onClick={() => { setShowCreate(false); setFormError(''); setSelectedPresetIdx(null) }}
                 className="px-4 py-2 min-h-[44px] text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 キャンセル

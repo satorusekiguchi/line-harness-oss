@@ -463,6 +463,52 @@ export const api = {
         '/api/notifications?' + new URLSearchParams(params as Record<string, string>),
       ),
   },
+  richMenus: {
+    list: (params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<Record<string, unknown>[]>>('/api/rich-menus' + query)
+    },
+    create: (data: Record<string, unknown>, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<{ richMenuId: string }>>('/api/rich-menus' + query, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })
+    },
+    delete: (id: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}` + query, { method: 'DELETE' })
+    },
+    setDefault: (id: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}/default` + query, { method: 'POST' })
+    },
+    uploadImage: (id: string, image: string, contentType?: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}/image` + query, {
+        method: 'POST',
+        body: JSON.stringify({ image, contentType }),
+      })
+    },
+    updateConfig: (id: string, data: { name?: string; description?: string; targetSegment?: string }, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<null>>(`/api/rich-menus/${id}/config` + query, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      })
+    },
+    linkToFriend: (friendId: string, richMenuId: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/rich-menu` + query, {
+        method: 'POST',
+        body: JSON.stringify({ richMenuId }),
+      })
+    },
+    unlinkFromFriend: (friendId: string, params?: { accountId?: string }) => {
+      const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
+      return fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/rich-menu` + query, { method: 'DELETE' })
+    },
+  },
   health: {
     accounts: () =>
       fetchApi<ApiResponse<LineAccount[]>>('/api/line-accounts'),

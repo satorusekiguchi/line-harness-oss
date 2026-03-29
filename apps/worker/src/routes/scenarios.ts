@@ -176,6 +176,7 @@ scenarios.put('/api/scenarios/:id', async (c) => {
       triggerType?: ScenarioTriggerType;
       triggerTagId?: string | null;
       isActive?: boolean;
+      lineAccountId?: string | null;
     }>();
 
     const updated = await updateScenario(c.env.DB, id, {
@@ -188,6 +189,13 @@ scenarios.put('/api/scenarios/:id', async (c) => {
 
     if (!updated) {
       return c.json({ success: false, error: 'Scenario not found' }, 404);
+    }
+
+    // Update line_account_id separately (not covered by updateScenario helper)
+    if (body.lineAccountId !== undefined) {
+      await c.env.DB.prepare('UPDATE scenarios SET line_account_id = ? WHERE id = ?')
+        .bind(body.lineAccountId, id)
+        .run();
     }
 
     return c.json({ success: true, data: serializeScenario(updated) });

@@ -43,7 +43,7 @@ liffRoutes.get('/auth/line', async (c) => {
 
   // Multi-account: resolve LINE Login channel + LIFF from DB if account param provided
   let channelId = c.env.LINE_LOGIN_CHANNEL_ID;
-  let liffUrl = c.env.LIFF_URL;
+  let liffUrl = c.env.LIFF_URL || '';
   if (accountParam) {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.login_channel_id) {
@@ -54,20 +54,6 @@ liffRoutes.get('/auth/line', async (c) => {
     }
   }
   const callbackUrl = `${baseUrl}/auth/callback`;
-
-  // Build LIFF URL with ref + ad params (for mobile → LINE app)
-  // Extract LIFF ID from URL and pass as query param so the app can init correctly
-  const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
-  const liffParams = new URLSearchParams();
-  if (liffIdMatch) liffParams.set('liffId', liffIdMatch[1]);
-  if (ref) liffParams.set('ref', ref);
-  if (redirect) liffParams.set('redirect', redirect);
-  if (gclid) liffParams.set('gclid', gclid);
-  if (fbclid) liffParams.set('fbclid', fbclid);
-  if (utmSource) liffParams.set('utm_source', utmSource);
-  const liffTarget = liffParams.toString()
-    ? `${liffUrl}?${liffParams.toString()}`
-    : liffUrl;
 
   // Build OAuth URL (for desktop fallback)
   // Pack all tracking params into state so they survive the OAuth redirect
@@ -80,6 +66,24 @@ liffRoutes.get('/auth/line', async (c) => {
   loginUrl.searchParams.set('scope', 'profile openid email');
   loginUrl.searchParams.set('bot_prompt', 'aggressive');
   loginUrl.searchParams.set('state', encodedState);
+
+  // LIFF_URL が未設定の場合は OAuth フローに直接リダイレクト
+  if (!liffUrl) {
+    return c.redirect(loginUrl.toString());
+  }
+
+  // Build LIFF URL with ref + ad params (for mobile → LINE app)
+  const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
+  const liffParams = new URLSearchParams();
+  if (liffIdMatch) liffParams.set('liffId', liffIdMatch[1]);
+  if (ref) liffParams.set('ref', ref);
+  if (redirect) liffParams.set('redirect', redirect);
+  if (gclid) liffParams.set('gclid', gclid);
+  if (fbclid) liffParams.set('fbclid', fbclid);
+  if (utmSource) liffParams.set('utm_source', utmSource);
+  const liffTarget = liffParams.toString()
+    ? `${liffUrl}?${liffParams.toString()}`
+    : liffUrl;
 
   // Build LIFF URL with params (opens LINE app directly on mobile + QR on PC)
   const qrParams = new URLSearchParams();
@@ -422,6 +426,103 @@ liffRoutes.get('/auth/callback', async (c) => {
   } catch (err) {
     console.error('Auth callback error:', err);
     return c.html(errorPage('Internal error'));
+  }
+});
+
+// ─── 肌診断アンケート ────────────────────────────────────────────
+
+/**
+ * GET /api/liff/skin-diagnosis — 肌診断アンケートフォームHTML
+ *
+ * LIFF URL として設定し、LINE チャット内ブラウザで開くフォーム。
+ * 回答後に POST /api/liff/skin-diagnosis に送信し、タグを自動付与する。
+ */
+liffRoutes.get('/api/liff/skin-diagnosis', async (c) => {
+  const workerUrl = c.env.WORKER_URL || new URL(c.req.url).origin;
+  return c.html(skinDiagnosisFormHtml(workerUrl));
+});
+
+/**
+ * POST /api/liff/skin-diagnosis — 肌診断結果を保存してタグを付与
+ *
+ * Body: { lineUserId, skinType, concern, ageGroup, gender, careSteps }
+ */
+liffRoutes.post('/api/liff/skin-diagnosis', async (c) => {
+  try {
+    const body = await c.req.json<{
+      lineUserId: string;
+      skinType?: string;
+      concern?: string;
+      ageGroup?: string;
+      gender?: string;
+      careSteps?: string;
+    }>();
+
+    if (!body.lineUserId) {
+      return c.json({ success: false, error: 'lineUserId is required' }, 400);
+    }
+
+    const db = c.env.DB;
+    const friend = await getFriendByLineUserId(db, body.lineUserId);
+    if (!friend) {
+      return c.json({ success: false, error: 'Friend not found' }, 404);
+    }
+
+    // タグ名 → ID マッピングを使って自動タグ付与
+    const tagNamesToAdd: string[] = [];
+    if (body.skinType) tagNamesToAdd.push(`肌質:${body.skinType}`);
+    if (body.concern) tagNamesToAdd.push(`悩み:${body.concern}`);
+    if (body.ageGroup) tagNamesToAdd.push(`年代:${body.ageGroup}`);
+    if (body.gender) tagNamesToAdd.push(`性別:${body.gender}`);
+    if (body.careSteps) tagNamesToAdd.push(`ケア習慣:${body.careSteps}`);
+
+    for (const tagName of tagNamesToAdd) {
+      // タグが存在しなければ作成
+      let tag = await db
+        .prepare(`SELECT id FROM tags WHERE name = ?`)
+        .bind(tagName)
+        .first<{ id: string }>();
+
+      if (!tag) {
+        const tagId = crypto.randomUUID();
+        const now = new Date(Date.now() + 9 * 3600_000).toISOString().replace('Z', '+09:00');
+        await db
+          .prepare(`INSERT OR IGNORE INTO tags (id, name, color, created_at) VALUES (?, ?, '#8B5CF6', ?)`)
+          .bind(tagId, tagName, now)
+          .run();
+        tag = { id: tagId };
+      }
+
+      // friend_tags に追加（重複は無視）
+      const now = new Date(Date.now() + 9 * 3600_000).toISOString().replace('Z', '+09:00');
+      await db
+        .prepare(`INSERT OR IGNORE INTO friend_tags (friend_id, tag_id, assigned_at) VALUES (?, ?, ?)`)
+        .bind(friend.id, tag.id, now)
+        .run();
+    }
+
+    // 診断結果を metadata に保存
+    const existingMeta = await db
+      .prepare('SELECT metadata FROM friends WHERE id = ?')
+      .bind(friend.id)
+      .first<{ metadata: string }>();
+    const meta = JSON.parse(existingMeta?.metadata || '{}') as Record<string, unknown>;
+    if (body.skinType) meta.skin_type = body.skinType;
+    if (body.concern) meta.concern = body.concern;
+    if (body.ageGroup) meta.age_group = body.ageGroup;
+    if (body.gender) meta.gender = body.gender;
+    if (body.careSteps) meta.care_steps = body.careSteps;
+    meta.skin_diagnosed_at = new Date(Date.now() + 9 * 3600_000).toISOString().replace('Z', '+09:00');
+
+    await db
+      .prepare('UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?')
+      .bind(JSON.stringify(meta), new Date(Date.now() + 9 * 3600_000).toISOString().replace('Z', '+09:00'), friend.id)
+      .run();
+
+    return c.json({ success: true, data: { tagsAdded: tagNamesToAdd } });
+  } catch (err) {
+    console.error('POST /api/liff/skin-diagnosis error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
 
@@ -849,6 +950,297 @@ function errorPage(message: string): string {
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function skinDiagnosisFormHtml(workerUrl: string): string {
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nú:d 肌タイプ診断</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Hiragino Sans', 'Yu Gothic', system-ui, sans-serif; background: #fafaf9; color: #1c1917; min-height: 100vh; }
+    .header { background: #fff; border-bottom: 1px solid #e7e5e4; padding: 16px 20px; text-align: center; }
+    .header h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.05em; color: #1c1917; }
+    .header p { font-size: 12px; color: #78716c; margin-top: 4px; }
+    .progress { height: 3px; background: #e7e5e4; }
+    .progress-bar { height: 3px; background: #1c1917; width: 0%; transition: width 0.3s ease; }
+    .container { max-width: 480px; margin: 0 auto; padding: 24px 20px 40px; }
+    .step { display: none; }
+    .step.active { display: block; }
+    .step-label { font-size: 11px; font-weight: 600; color: #78716c; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+    .step h2 { font-size: 20px; font-weight: 700; line-height: 1.4; margin-bottom: 6px; }
+    .step .sub { font-size: 13px; color: #78716c; margin-bottom: 24px; line-height: 1.6; }
+    .options { display: flex; flex-direction: column; gap: 10px; }
+    .option { display: flex; align-items: center; gap: 12px; padding: 14px 16px; background: #fff; border: 1.5px solid #e7e5e4; border-radius: 12px; cursor: pointer; transition: all 0.15s; }
+    .option:active { background: #fafaf9; }
+    .option.selected { border-color: #1c1917; background: #fafaf9; }
+    .option-icon { font-size: 22px; width: 32px; text-align: center; }
+    .option-text { flex: 1; }
+    .option-text strong { display: block; font-size: 14px; font-weight: 600; }
+    .option-text span { font-size: 12px; color: #78716c; }
+    .option-check { width: 20px; height: 20px; border: 1.5px solid #d6d3d1; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+    .option.selected .option-check { background: #1c1917; border-color: #1c1917; }
+    .option.selected .option-check::after { content: ''; display: block; width: 8px; height: 8px; background: #fff; border-radius: 50%; }
+    .nav { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; }
+    .btn { padding: 14px 28px; border-radius: 40px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; font-family: inherit; }
+    .btn-back { background: transparent; color: #78716c; padding-left: 0; }
+    .btn-next { background: #1c1917; color: #fff; min-width: 120px; }
+    .btn-next:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-submit { background: #1c1917; color: #fff; width: 100%; padding: 16px; font-size: 15px; border-radius: 12px; }
+    .complete { text-align: center; padding: 40px 0; }
+    .complete .icon { font-size: 48px; margin-bottom: 16px; }
+    .complete h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .complete p { font-size: 14px; color: #78716c; line-height: 1.7; }
+    .loading { text-align: center; padding: 40px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>nú:d 肌タイプ診断</h1>
+    <p>あなたの肌を教えてください（約30秒）</p>
+  </div>
+  <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+
+  <div class="container" id="formContainer">
+    <!-- Step 1: 肌質 -->
+    <div class="step active" id="step1" data-key="skinType">
+      <p class="step-label">Q1 / 5</p>
+      <h2>現在の肌の状態は？</h2>
+      <p class="sub">最も当てはまるものを選んでください</p>
+      <div class="options">
+        <label class="option" data-value="乾燥">
+          <span class="option-icon">🌵</span>
+          <div class="option-text"><strong>乾燥が気になる</strong><span>つっぱり・粉ふきが起きやすい</span></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="脂性">
+          <span class="option-icon">💧</span>
+          <div class="option-text"><strong>ベタつきが気になる</strong><span>テカリが出やすい</span></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="混合">
+          <span class="option-icon">🔄</span>
+          <div class="option-text"><strong>季節によって変わる</strong><span>部位や時期で変動する</span></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="普通">
+          <span class="option-icon">✨</span>
+          <div class="option-text"><strong>特に気にならない</strong><span>比較的安定している</span></div>
+          <div class="option-check"></div>
+        </label>
+      </div>
+      <div class="nav">
+        <span></span>
+        <button class="btn btn-next" id="next1" disabled>次へ</button>
+      </div>
+    </div>
+
+    <!-- Step 2: 肌悩み -->
+    <div class="step" id="step2" data-key="concern">
+      <p class="step-label">Q2 / 5</p>
+      <h2>最も気になる肌悩みは？</h2>
+      <p class="sub">1つ選んでください</p>
+      <div class="options">
+        <label class="option" data-value="乾燥・カサつき">
+          <span class="option-icon">🍂</span>
+          <div class="option-text"><strong>乾燥・カサつき</strong></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="毛穴">
+          <span class="option-icon">🔍</span>
+          <div class="option-text"><strong>毛穴の目立ち</strong></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="ハリ不足">
+          <span class="option-icon">🕰️</span>
+          <div class="option-text"><strong>ハリ・弾力不足</strong></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="敏感・ゆらぎ">
+          <span class="option-icon">🌸</span>
+          <div class="option-text"><strong>敏感・ゆらぎ肌</strong></div>
+          <div class="option-check"></div>
+        </label>
+        <label class="option" data-value="髭剃り後の荒れ">
+          <span class="option-icon">🪒</span>
+          <div class="option-text"><strong>髭剃り後の荒れ</strong></div>
+          <div class="option-check"></div>
+        </label>
+      </div>
+      <div class="nav">
+        <button class="btn btn-back" id="back2">← 戻る</button>
+        <button class="btn btn-next" id="next2" disabled>次へ</button>
+      </div>
+    </div>
+
+    <!-- Step 3: 年代 -->
+    <div class="step" id="step3" data-key="ageGroup">
+      <p class="step-label">Q3 / 5</p>
+      <h2>年代を教えてください</h2>
+      <p class="sub">より適切なケア情報をお届けするために</p>
+      <div class="options">
+        <label class="option" data-value="20代"><span class="option-icon">🌱</span><div class="option-text"><strong>20代</strong></div><div class="option-check"></div></label>
+        <label class="option" data-value="30代"><span class="option-icon">🌿</span><div class="option-text"><strong>30代</strong></div><div class="option-check"></div></label>
+        <label class="option" data-value="40代"><span class="option-icon">🌳</span><div class="option-text"><strong>40代</strong></div><div class="option-check"></div></label>
+        <label class="option" data-value="50代以上"><span class="option-icon">🌲</span><div class="option-text"><strong>50代以上</strong></div><div class="option-check"></div></label>
+      </div>
+      <div class="nav">
+        <button class="btn btn-back" id="back3">← 戻る</button>
+        <button class="btn btn-next" id="next3" disabled>次へ</button>
+      </div>
+    </div>
+
+    <!-- Step 4: 性別 -->
+    <div class="step" id="step4" data-key="gender">
+      <p class="step-label">Q4 / 5</p>
+      <h2>性別を教えてください</h2>
+      <p class="sub">任意。回答しなくても問題ありません</p>
+      <div class="options">
+        <label class="option" data-value="女性"><span class="option-icon">🌺</span><div class="option-text"><strong>女性</strong></div><div class="option-check"></div></label>
+        <label class="option" data-value="男性"><span class="option-icon">🌊</span><div class="option-text"><strong>男性</strong></div><div class="option-check"></div></label>
+        <label class="option" data-value="回答しない"><span class="option-icon">🔒</span><div class="option-text"><strong>回答しない</strong></div><div class="option-check"></div></label>
+      </div>
+      <div class="nav">
+        <button class="btn btn-back" id="back4">← 戻る</button>
+        <button class="btn btn-next" id="next4" disabled>次へ</button>
+      </div>
+    </div>
+
+    <!-- Step 5: ケアステップ数 -->
+    <div class="step" id="step5" data-key="careSteps">
+      <p class="step-label">Q5 / 5</p>
+      <h2>現在のスキンケア<br>ステップ数は？</h2>
+      <p class="sub">日頃のルーティンを教えてください</p>
+      <div class="options">
+        <label class="option" data-value="1〜2ステップ"><span class="option-icon">1️⃣</span><div class="option-text"><strong>1〜2ステップ</strong><span>シンプルケア派</span></div><div class="option-check"></div></label>
+        <label class="option" data-value="3〜4ステップ"><span class="option-icon">3️⃣</span><div class="option-text"><strong>3〜4ステップ</strong><span>スタンダードケア</span></div><div class="option-check"></div></label>
+        <label class="option" data-value="5ステップ以上"><span class="option-icon">5️⃣</span><div class="option-text"><strong>5ステップ以上</strong><span>しっかりケア派</span></div><div class="option-check"></div></label>
+      </div>
+      <div class="nav">
+        <button class="btn btn-back" id="back5">← 戻る</button>
+        <button class="btn btn-next" id="next5" disabled>確認する</button>
+      </div>
+    </div>
+
+    <!-- 送信中 -->
+    <div class="step" id="stepLoading">
+      <div class="loading">
+        <p>診断結果を保存中...</p>
+      </div>
+    </div>
+
+    <!-- 完了 -->
+    <div class="step" id="stepComplete">
+      <div class="complete">
+        <div class="icon">✅</div>
+        <h2>診断完了！</h2>
+        <p>ありがとうございます。<br>あなたの肌タイプに合わせた<br>情報をお届けします。<br><br>このページを閉じてください。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var WORKER_URL = '${workerUrl}';
+    var answers = {};
+    var currentStep = 1;
+    var totalSteps = 5;
+
+    function updateProgress() {
+      var pct = (currentStep - 1) / totalSteps * 100;
+      document.getElementById('progressBar').style.width = pct + '%';
+    }
+
+    function showStep(n) {
+      document.querySelectorAll('.step').forEach(function(el) { el.classList.remove('active'); });
+      var el = document.getElementById('step' + n) || document.getElementById('stepLoading');
+      if (el) el.classList.add('active');
+      currentStep = n;
+      updateProgress();
+    }
+
+    // 選択肢クリック
+    document.querySelectorAll('.options').forEach(function(optGroup) {
+      optGroup.querySelectorAll('.option').forEach(function(opt) {
+        opt.addEventListener('click', function() {
+          optGroup.querySelectorAll('.option').forEach(function(o) { o.classList.remove('selected'); });
+          opt.classList.add('selected');
+          var stepEl = opt.closest('.step');
+          var nextBtn = stepEl.querySelector('.btn-next');
+          if (nextBtn) nextBtn.disabled = false;
+          var key = stepEl.dataset.key;
+          answers[key] = opt.dataset.value;
+        });
+      });
+    });
+
+    // ナビゲーション
+    for (var i = 1; i <= totalSteps; i++) {
+      (function(idx) {
+        var nextBtn = document.getElementById('next' + idx);
+        var backBtn = document.getElementById('back' + idx);
+        if (nextBtn) {
+          nextBtn.addEventListener('click', function() {
+            if (idx < totalSteps) {
+              showStep(idx + 1);
+            } else {
+              submitDiagnosis();
+            }
+          });
+        }
+        if (backBtn) {
+          backBtn.addEventListener('click', function() { showStep(idx - 1); });
+        }
+      })(i);
+    }
+
+    async function submitDiagnosis() {
+      document.querySelectorAll('.step').forEach(function(el) { el.classList.remove('active'); });
+      document.getElementById('stepLoading').classList.add('active');
+
+      var lineUserId = null;
+      if (typeof liff !== 'undefined' && liff.isLoggedIn && liff.isLoggedIn()) {
+        var profile = await liff.getProfile();
+        lineUserId = profile.userId;
+      } else {
+        // フォールバック: URLパラメータから取得
+        lineUserId = new URLSearchParams(window.location.search).get('lineUserId');
+      }
+
+      if (!lineUserId) {
+        document.getElementById('stepLoading').classList.remove('active');
+        document.getElementById('stepComplete').classList.add('active');
+        return;
+      }
+
+      try {
+        var res = await fetch(WORKER_URL + '/api/liff/skin-diagnosis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({ lineUserId: lineUserId }, answers))
+        });
+        var data = await res.json();
+        console.log('diagnosis result:', data);
+      } catch (e) {
+        console.error('diagnosis error:', e);
+      }
+
+      document.getElementById('stepLoading').classList.remove('active');
+      document.getElementById('stepComplete').classList.add('active');
+      document.getElementById('progressBar').style.width = '100%';
+
+      // LIFFを閉じる（LIFFアプリ内の場合）
+      if (typeof liff !== 'undefined' && liff.closeWindow) {
+        setTimeout(function() { liff.closeWindow(); }, 2000);
+      }
+    }
+
+    updateProgress();
+  </script>
+</body>
+</html>`;
 }
 
 export { liffRoutes };

@@ -8,14 +8,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.6.0",
     "@line-crm/db": "workspace:*",
     "@line-crm/line-sdk": "workspace:*",
-    "@line-crm/shared": "workspace:*"
+    "@line-crm/shared": "workspace:*",
+    "hono": "^4.6.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
     "typescript": "^5.7.0",
-    "wrangler": "^3.99.0"
+    "wrangler": "^4.78.0"
   }
 }

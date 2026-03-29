@@ -166,7 +166,7 @@ export default function AutomationsPage() {
     const fetchMenus = async () => {
       try {
         const res = await api.richMenus.list({ accountId: selectedAccountId || undefined })
-        if (res.success) setRichMenus(res.data as RichMenuEntry[])
+        if (res.success) setRichMenus(res.data as unknown as RichMenuEntry[])
       } catch { /* ignore */ }
     }
     fetchMenus()

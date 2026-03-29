@@ -118,7 +118,7 @@ export default function RichMenusPage() {
     try {
       const res = await api.richMenus.list({ accountId })
       if (res.success) {
-        setMenus(res.data as RichMenuObject[])
+        setMenus(res.data as unknown as RichMenuObject[])
       } else {
         setError('リッチメニューの取得に失敗しました')
       }

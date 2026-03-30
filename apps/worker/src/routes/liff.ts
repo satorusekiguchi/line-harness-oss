@@ -67,72 +67,89 @@ liffRoutes.get('/auth/line', async (c) => {
   loginUrl.searchParams.set('bot_prompt', 'aggressive');
   loginUrl.searchParams.set('state', encodedState);
 
-  // LIFF_URL が未設定の場合は OAuth フローに直接リダイレクト
-  if (!liffUrl) {
+  // モバイル判定
+  const ua = (c.req.header('user-agent') || '').toLowerCase();
+  const isMobile = /iphone|ipad|android|mobile/.test(ua);
+
+  // モバイルは常に OAuth に直接リダイレクト（LINE アプリが開き、bot_prompt=aggressive で友だち追加）
+  if (isMobile) {
     return c.redirect(loginUrl.toString());
   }
 
-  // Build LIFF URL with ref + ad params (for mobile → LINE app)
-  const liffIdMatch = liffUrl.match(/liff\.line\.me\/([0-9]+-[A-Za-z0-9]+)/);
-  const liffParams = new URLSearchParams();
-  if (liffIdMatch) liffParams.set('liffId', liffIdMatch[1]);
-  if (ref) liffParams.set('ref', ref);
-  if (redirect) liffParams.set('redirect', redirect);
-  if (gclid) liffParams.set('gclid', gclid);
-  if (fbclid) liffParams.set('fbclid', fbclid);
-  if (utmSource) liffParams.set('utm_source', utmSource);
-  const liffTarget = liffParams.toString()
-    ? `${liffUrl}?${liffParams.toString()}`
-    : liffUrl;
-
-  // Build LIFF URL with params (opens LINE app directly on mobile + QR on PC)
-  const qrParams = new URLSearchParams();
-  if (ref) qrParams.set('ref', ref);
-  if (uidParam) qrParams.set('uid', uidParam);
-  if (accountParam) qrParams.set('account', accountParam);
-  const qrUrl = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
-
-  // Mobile: redirect to LIFF URL (opens LINE app directly)
-  // Exception: cross-account links (account param) use OAuth directly
-  // because Account A's LIFF can't open from Account B's LINE chat
-  const ua = (c.req.header('user-agent') || '').toLowerCase();
-  const isMobile = /iphone|ipad|android|mobile/.test(ua);
-  if (isMobile) {
-    if (accountParam) {
-      // Cross-account: use OAuth (LIFF won't work across accounts)
-      return c.redirect(loginUrl.toString());
-    }
-    return c.redirect(qrUrl);
+  // PC: QR コードページを表示
+  // QR の飛び先は LIFF URL（設定済みの場合）または OAuth URL（未設定の場合）
+  let qrTarget: string;
+  if (liffUrl) {
+    const qrParams = new URLSearchParams();
+    if (ref) qrParams.set('ref', ref);
+    if (uidParam) qrParams.set('uid', uidParam);
+    if (accountParam) qrParams.set('account', accountParam);
+    qrTarget = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
+  } else {
+    // LIFF 未設定の場合は OAuth URL を QR にする
+    // スマホでスキャンすると LINE ログイン → 友だち追加の流れになる
+    qrTarget = loginUrl.toString();
   }
 
-  // PC: show QR code page
+  // アカウント情報を取得（表示用）
+  let accountDisplayName = 'LINE 公式アカウント';
+  let accountPictureUrl = '';
+  let accountBasicId = '';
+  let accountPremiumId = '';
+  if (accountParam) {
+    const account = await getLineAccountByChannelId(c.env.DB, accountParam);
+    if (account?.name) accountDisplayName = account.name;
+    // LINE API からプロフィール取得
+    try {
+      const botRes = await fetch('https://api.line.me/v2/bot/info', {
+        headers: { Authorization: `Bearer ${account?.channel_access_token}` },
+      });
+      if (botRes.ok) {
+        const bot = await botRes.json() as { displayName?: string; pictureUrl?: string; basicId?: string; premiumId?: string };
+        if (bot.displayName) accountDisplayName = bot.displayName;
+        if (bot.pictureUrl) accountPictureUrl = bot.pictureUrl;
+        if (bot.basicId) accountBasicId = bot.basicId;
+        if (bot.premiumId) accountPremiumId = bot.premiumId;
+      }
+    } catch { /* fallback to DB name */ }
+  }
+  // Premium ID があれば優先、なければ Basic ID を表示
+  const displayId = accountPremiumId || accountBasicId;
+
   return c.html(`<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LINE で友だち追加</title>
+  <title>${accountDisplayName} — 友だち追加</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Hiragino Sans', system-ui, sans-serif; background: #0d1117; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-    .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 48px; text-align: center; max-width: 480px; width: 90%; }
-    h1 { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
-    .sub { font-size: 14px; color: rgba(255,255,255,0.5); margin-bottom: 32px; }
-    .qr { background: #fff; border-radius: 16px; padding: 24px; display: inline-block; margin-bottom: 24px; }
-    .qr img { display: block; width: 240px; height: 240px; }
-    .hint { font-size: 13px; color: rgba(255,255,255,0.4); line-height: 1.6; }
-    .badge { display: inline-block; margin-top: 24px; padding: 8px 20px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #06C755; background: rgba(6,199,85,0.1); border: 1px solid rgba(6,199,85,0.2); }
+    body { font-family: 'Hiragino Sans', system-ui, sans-serif; background: #111111; color: #fff; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 24px; padding: 40px 48px; text-align: center; max-width: 440px; width: 90%; }
+    .avatar { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; margin: 0 auto 16px; display: block; border: 2px solid rgba(255,255,255,0.1); }
+    .avatar-placeholder { width: 72px; height: 72px; border-radius: 50%; background: #06C755; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .basic-id { font-size: 12px; color: rgba(255,255,255,0.35); margin-bottom: 28px; }
+    .qr { background: #fff; border-radius: 14px; padding: 20px; display: inline-block; margin-bottom: 20px; }
+    .qr img { display: block; width: 220px; height: 220px; }
+    .hint { font-size: 12px; color: rgba(255,255,255,0.35); line-height: 1.7; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 20px; padding: 8px 20px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #06C755; background: rgba(6,199,85,0.08); border: 1px solid rgba(6,199,85,0.2); }
+    .badge::before { content: ''; display: block; width: 7px; height: 7px; border-radius: 50%; background: #06C755; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>LINE Harness を体験</h1>
-    <p class="sub">スマートフォンで QR コードを読み取ってください</p>
+    ${accountPictureUrl
+      ? `<img src="${accountPictureUrl}" class="avatar" alt="${accountDisplayName}">`
+      : `<div class="avatar-placeholder">💬</div>`
+    }
+    <h1>${accountDisplayName}</h1>
+    <p class="basic-id">${displayId || ''}</p>
     <div class="qr">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qrUrl)}" alt="QR Code">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrTarget)}" alt="QR Code">
     </div>
     <p class="hint">LINE アプリのカメラまたは<br>スマートフォンのカメラで読み取れます</p>
-    <div class="badge">LINE Harness OSS</div>
+    <div class="badge">友だち追加</div>
   </div>
 </body>
 </html>`);
@@ -410,9 +427,10 @@ liffRoutes.get('/auth/callback', async (c) => {
             headers: { Authorization: `Bearer ${account.channel_access_token}` },
           });
           if (botInfo.ok) {
-            const bot = await botInfo.json() as { basicId?: string };
-            if (bot.basicId) {
-              return c.redirect(`https://line.me/R/ti/p/${bot.basicId}`);
+            const bot = await botInfo.json() as { basicId?: string; premiumId?: string };
+            const lineId = bot.premiumId || bot.basicId;
+            if (lineId) {
+              return c.redirect(`https://line.me/R/ti/p/${lineId}`);
             }
           }
         } catch {

@@ -31,15 +31,15 @@ function serializeLineAccountFull(row: DbLineAccount) {
   };
 }
 
-// Fetch bot profile (displayName, pictureUrl) from LINE API
-async function fetchBotProfile(accessToken: string): Promise<{ displayName?: string; pictureUrl?: string; basicId?: string }> {
+// Fetch bot profile (displayName, pictureUrl, basicId, premiumId) from LINE API
+async function fetchBotProfile(accessToken: string): Promise<{ displayName?: string; pictureUrl?: string; basicId?: string; premiumId?: string }> {
   try {
     const res = await fetch('https://api.line.me/v2/bot/info', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) return {};
-    const data = await res.json() as { displayName?: string; pictureUrl?: string; basicId?: string };
-    return { displayName: data.displayName, pictureUrl: data.pictureUrl, basicId: data.basicId };
+    const data = await res.json() as { displayName?: string; pictureUrl?: string; basicId?: string; premiumId?: string };
+    return { displayName: data.displayName, pictureUrl: data.pictureUrl, basicId: data.basicId, premiumId: data.premiumId };
   } catch {
     return {};
   }
@@ -74,6 +74,7 @@ lineAccounts.get('/api/line-accounts', async (c) => {
           displayName: profile.displayName || item.name,
           pictureUrl: profile.pictureUrl || null,
           basicId: profile.basicId || null,
+          premiumId: profile.premiumId || null,
           stats: {
             friendCount: friendCount?.count ?? 0,
             activeScenarios: scenarioCount?.count ?? 0,

@@ -151,23 +151,42 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Demo banner */}
-      <a
-        href="https://line-crm-worker.line-crm-api.workers.dev/auth/line?ref=dashboard"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
-            <p className="text-xs text-gray-500 mt-0.5">友だち追加でステップ配信・フォーム・自動返信を体験</p>
+      {/* 友だち追加バナー */}
+      {selectedAccount && (
+        <a
+          href={
+            selectedAccount.basicId
+              ? `https://line.me/R/ti/p/${selectedAccount.basicId}`
+              : `${process.env.NEXT_PUBLIC_API_URL}/auth/line?account=${selectedAccount.channelId}&ref=dashboard`
+          }
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              {selectedAccount.pictureUrl && (
+                <img
+                  src={selectedAccount.pictureUrl}
+                  alt={selectedAccount.displayName || selectedAccount.name}
+                  className="w-9 h-9 rounded-full shrink-0"
+                />
+              )}
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">
+                  {selectedAccount.displayName || selectedAccount.name}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {selectedAccount.basicId ?? `@${selectedAccount.channelId}`} · 友だち追加リンク
+                </p>
+              </div>
+            </div>
+            <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium shrink-0 ml-3" style={{ backgroundColor: '#06C755' }}>
+              友だち追加
+            </span>
           </div>
-          <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium" style={{ backgroundColor: '#06C755' }}>
-            友だち追加
-          </span>
-        </div>
-      </a>
+        </a>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">

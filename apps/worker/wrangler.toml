@@ -7,7 +7,7 @@ workers_dev = true
 # Do NOT hardcode secrets here
 
 [vars]
-WORKER_URL = "https://line-crm-worker.sekiguchi.workers.dev"
+WORKER_URL = "https://line-crm-worker.mumumuinc.workers.dev"
 
 [[d1_databases]]
 binding = "DB"

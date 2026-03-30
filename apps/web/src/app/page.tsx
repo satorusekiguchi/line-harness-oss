@@ -154,11 +154,7 @@ export default function DashboardPage() {
       {/* 友だち追加バナー */}
       {selectedAccount && (
         <a
-          href={
-            selectedAccount.basicId
-              ? `https://line.me/R/ti/p/${selectedAccount.basicId}`
-              : `${process.env.NEXT_PUBLIC_API_URL}/auth/line?account=${selectedAccount.channelId}&ref=dashboard`
-          }
+          href={`${process.env.NEXT_PUBLIC_API_URL}/auth/line?account=${selectedAccount.channelId}&ref=dashboard`}
           target="_blank"
           rel="noopener noreferrer"
           className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
@@ -174,10 +170,10 @@ export default function DashboardPage() {
               )}
               <div className="min-w-0">
                 <p className="text-sm font-bold text-gray-900 truncate">
-                  {selectedAccount.displayName || selectedAccount.name}
+                  {selectedAccount.displayName || selectedAccount.name} の友だち追加
                 </p>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  {selectedAccount.basicId ?? `@${selectedAccount.channelId}`} · 友だち追加リンク
+                  LINE Login → UUID取得 → シナリオ自動開始
                 </p>
               </div>
             </div>

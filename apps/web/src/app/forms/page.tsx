@@ -187,127 +187,116 @@ export default function FormsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Header title="フォーム管理" />
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        {/* Header row */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">フォーム一覧</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-              LIFFで表示するアンケートや問い合わせフォームを作成・管理します
-            </p>
-          </div>
+    <div>
+      <Header
+        title="フォーム管理"
+        description="LIFFで表示するアンケートや問い合わせフォームを作成・管理します"
+        action={
           <button
             onClick={openCreate}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+            style={{ backgroundColor: '#06C755' }}
           >
             + 新規フォーム
           </button>
+        }
+      />
+
+      {/* List */}
+      {loading ? (
+        <div className="text-center py-16 text-gray-400">読み込み中...</div>
+      ) : forms.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <div className="text-4xl mb-3">📋</div>
+          <p>フォームがありません</p>
+          <p className="text-sm mt-1">「+ 新規フォーム」から作成してください</p>
         </div>
-
-        {/* List */}
-        {loading ? (
-          <div className="text-center py-16 text-gray-400">読み込み中...</div>
-        ) : forms.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">
-            <div className="text-4xl mb-3">📋</div>
-            <p>フォームがありません</p>
-            <p className="text-sm mt-1">「+ 新規フォーム」から作成してください</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {forms.map(f => (
-              <div
-                key={f.id}
-                className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-gray-900 dark:text-white truncate">{f.name}</h3>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${f.isActive ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>
-                        {f.isActive ? '受付中' : '停止中'}
-                      </span>
-                      <span className="text-xs text-gray-400">{f.submitCount} 件の回答</span>
-                    </div>
-                    {f.description && (
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 truncate">{f.description}</p>
-                    )}
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                      <span>フィールド数: {f.fields?.length ?? 0}</span>
-                      {f.onSubmitTagId && (
-                        <span>🏷 タグ付与: {tags.find(t => t.id === f.onSubmitTagId)?.name ?? f.onSubmitTagId}</span>
-                      )}
-                      {f.onSubmitScenarioId && (
-                        <span>📋 シナリオ: {scenarios.find(s => s.id === f.onSubmitScenarioId)?.name ?? f.onSubmitScenarioId}</span>
-                      )}
-                    </div>
-
-                    {/* URL表示 */}
-                    <div className="mt-3 flex items-center gap-2 flex-wrap">
-                      <span className="text-xs text-gray-400 font-medium">Submit URL:</span>
-                      <code className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-700 dark:text-gray-300 break-all">
-                        {WORKER_URL}/api/forms/{f.id}/submit
-                      </code>
-                      <button
-                        onClick={() => copyUrl(f.id, 'direct')}
-                        className="text-xs px-2 py-1 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 rounded transition-colors"
-                      >
-                        {copiedId === f.id + 'direct' ? '✓ コピー済み' : 'URLコピー'}
-                      </button>
-                    </div>
+      ) : (
+        <div className="space-y-4">
+          {forms.map(f => (
+            <div
+              key={f.id}
+              className="bg-white rounded-lg shadow-sm border border-gray-200 p-5"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-semibold text-gray-900 truncate">{f.name}</h3>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${f.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {f.isActive ? '受付中' : '停止中'}
+                    </span>
+                    <span className="text-xs text-gray-400">{f.submitCount} 件の回答</span>
                   </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
+                  {f.description && (
+                    <p className="text-sm text-gray-500 mt-1 truncate">{f.description}</p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                    <span>フィールド数: {f.fields?.length ?? 0}</span>
+                    {f.onSubmitTagId && (
+                      <span>🏷 タグ付与: {tags.find(t => t.id === f.onSubmitTagId)?.name ?? f.onSubmitTagId}</span>
+                    )}
+                    {f.onSubmitScenarioId && (
+                      <span>📋 シナリオ: {scenarios.find(s => s.id === f.onSubmitScenarioId)?.name ?? f.onSubmitScenarioId}</span>
+                    )}
+                  </div>
+                  {/* URL表示 */}
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-gray-400 font-medium">Submit URL:</span>
+                    <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-700 break-all">
+                      {WORKER_URL}/api/forms/{f.id}/submit
+                    </code>
                     <button
-                      onClick={() => handleToggle(f)}
-                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${f.isActive ? 'bg-yellow-50 hover:bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-green-50 hover:bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'}`}
+                      onClick={() => copyUrl(f.id, 'direct')}
+                      className="text-xs px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded transition-colors"
                     >
-                      {f.isActive ? '停止' : '有効化'}
-                    </button>
-                    <button
-                      onClick={() => openEdit(f)}
-                      className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg font-medium transition-colors"
-                    >
-                      編集
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirm(f.id)}
-                      className="text-xs px-3 py-1.5 bg-red-50 hover:bg-red-100 dark:bg-red-900/30 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 rounded-lg font-medium transition-colors"
-                    >
-                      削除
+                      {copiedId === f.id + 'direct' ? '✓ コピー済み' : 'URLコピー'}
                     </button>
                   </div>
                 </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleToggle(f)}
+                    className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${f.isActive ? 'bg-yellow-50 hover:bg-yellow-100 text-yellow-700' : 'bg-green-50 hover:bg-green-100 text-green-700'}`}
+                  >
+                    {f.isActive ? '停止' : '有効化'}
+                  </button>
+                  <button
+                    onClick={() => openEdit(f)}
+                    className="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+                  >
+                    編集
+                  </button>
+                  <button
+                    onClick={() => setDeleteConfirm(f.id)}
+                    className="text-xs px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg font-medium transition-colors"
+                  >
+                    削除
+                  </button>
+                </div>
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* How-to section */}
-        <div className="mt-10 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-6">
-          <h3 className="font-semibold text-indigo-800 dark:text-indigo-300 mb-3">📖 フォームの使い方</h3>
-          <ol className="space-y-2 text-sm text-indigo-700 dark:text-indigo-300 list-decimal list-inside">
-            <li>このページで「+ 新規フォーム」を押してフォームを作成する</li>
-            <li>フィールド（氏名・メール・選択肢など）を追加する</li>
-            <li>回答時に自動付与するタグやシナリオを設定する（任意）</li>
-            <li>作成後に表示される <strong>Submit URL</strong> をコピーする</li>
-            <li>LIFFアプリからそのURLに <code>POST</code> リクエストを送る</li>
-          </ol>
-          <div className="mt-4 bg-white dark:bg-gray-800 rounded-lg p-4 text-xs font-mono text-gray-700 dark:text-gray-300">
-            <div className="text-gray-400 mb-1">// LIFFからフォームを送信するサンプルコード</div>
-            <div>await fetch(<span className="text-green-600 dark:text-green-400">&quot;{WORKER_URL}/api/forms/&#123;formId&#125;/submit&quot;</span>, {'{'}</div>
-            <div className="pl-4">method: <span className="text-green-600 dark:text-green-400">&quot;POST&quot;</span>,</div>
-            <div className="pl-4">headers: {'{'} <span className="text-green-600 dark:text-green-400">&quot;Content-Type&quot;: &quot;application/json&quot;</span> {'}'},</div>
-            <div className="pl-4">body: JSON.stringify({'{'}</div>
-            <div className="pl-8">lineUserId: liff.getProfile().then(p =&gt; p.userId),</div>
-            <div className="pl-8">data: {'{'} name: &quot;山田太郎&quot;, email: &quot;test@example.com&quot; {'}'}</div>
-            <div className="pl-4">{'}'})</div>
-            <div>{'}'});</div>
-          </div>
+            </div>
+          ))}
         </div>
-      </main>
+      )}
+
+      {/* How-to section */}
+      <div className="mt-8 bg-blue-50 border border-blue-100 rounded-lg p-5">
+        <h3 className="font-semibold text-blue-800 mb-3 text-sm">📖 フォームの使い方</h3>
+        <ol className="space-y-1.5 text-sm text-blue-700 list-decimal list-inside">
+          <li>「+ 新規フォーム」からフォームを作成する</li>
+          <li>フィールド（氏名・メール・選択肢など）を追加する</li>
+          <li>回答時に自動付与するタグやシナリオを設定する（任意）</li>
+          <li>作成後に表示される <strong>Submit URL</strong> をLIFFから呼び出す</li>
+        </ol>
+        <div className="mt-3 bg-white rounded-lg p-3 text-xs font-mono text-gray-700 border border-blue-100">
+          <div className="text-gray-400 mb-1">// LIFFからフォームを送信するサンプルコード</div>
+          <div>await fetch(<span className="text-green-600">&quot;{WORKER_URL}/api/forms/&#123;formId&#125;/submit&quot;</span>, {'{'}</div>
+          <div className="pl-4">method: <span className="text-green-600">&quot;POST&quot;</span>,</div>
+          <div className="pl-4">headers: {'{'} <span className="text-green-600">&quot;Content-Type&quot;: &quot;application/json&quot;</span> {'}'},</div>
+          <div className="pl-4">body: JSON.stringify({'{'} lineUserId: uid, data: {'{'} name: &quot;山田太郎&quot; {'}'} {'}'})</div>
+          <div>{'}'});</div>
+        </div>
+      </div>
 
       {/* ── Delete confirm dialog ─────────────────────────────────────────────── */}
       {deleteConfirm && (

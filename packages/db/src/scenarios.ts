@@ -343,10 +343,12 @@ export async function enrollFriendInScenario(
   }
   const nextDeliveryAt = rawDate.toISOString().slice(0, -1) + '+09:00';
 
+  // current_step_order = -1 means "no step delivered yet"
+  // cron looks for step_order > -1 → finds step 0 correctly
   await db
     .prepare(
       `INSERT INTO friend_scenarios (id, friend_id, scenario_id, current_step_order, status, started_at, next_delivery_at, updated_at)
-       VALUES (?, ?, ?, 0, 'active', ?, ?, ?)`,
+       VALUES (?, ?, ?, -1, 'active', ?, ?, ?)`,
     )
     .bind(id, friendId, scenarioId, now, nextDeliveryAt, now)
     .run();

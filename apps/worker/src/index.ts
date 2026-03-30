@@ -140,17 +140,24 @@ async function scheduled(
     }
   }
 
-  // Run delivery for each account
-  const jobs = [];
+  const defaultClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
+
+  // processStepDeliveries is called ONCE — it uses an atomic DB claim per record
+  // and looks up each friend's correct account token internally to prevent
+  // duplicate delivery when multiple tokens share the same DB.
+  const jobs: Promise<void>[] = [
+    processStepDeliveries(env.DB, defaultClient, env.WORKER_URL),
+    checkAccountHealth(env.DB),
+  ];
+
+  // Broadcasts and reminders are still per-account (they filter by account internally)
   for (const token of activeTokens) {
     const lineClient = new LineClient(token);
     jobs.push(
-      processStepDeliveries(env.DB, lineClient, env.WORKER_URL),
       processScheduledBroadcasts(env.DB, lineClient),
       processReminderDeliveries(env.DB, lineClient),
     );
   }
-  jobs.push(checkAccountHealth(env.DB));
 
   await Promise.allSettled(jobs);
 }

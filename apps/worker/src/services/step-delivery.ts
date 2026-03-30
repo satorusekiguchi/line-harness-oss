@@ -6,7 +6,7 @@ import {
   getFriendById,
   jstNow,
 } from '@line-crm/db';
-import type { LineClient } from '@line-crm/line-sdk';
+import { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
 
@@ -68,7 +68,7 @@ function enforceDeliveryWindow(date: Date, preferredHour?: number): Date {
 
 export async function processStepDeliveries(
   db: D1Database,
-  lineClient: LineClient,
+  _lineClient: LineClient,
   workerUrl?: string,
 ): Promise<void> {
   // Skip delivery outside 9:00-23:00 JST window
@@ -85,7 +85,7 @@ export async function processStepDeliveries(
       if (i > 0) {
         await sleep(addJitter(50, 200));
       }
-      await processSingleDelivery(db, lineClient, fs, workerUrl);
+      await processSingleDelivery(db, fs, workerUrl);
     } catch (err) {
       console.error(`Error processing friend_scenario ${fs.id}:`, err);
       // Continue with next one
@@ -95,7 +95,6 @@ export async function processStepDeliveries(
 
 async function processSingleDelivery(
   db: D1Database,
-  lineClient: LineClient,
   fs: {
     id: string;
     friend_id: string;
@@ -106,10 +105,51 @@ async function processSingleDelivery(
   },
   workerUrl?: string,
 ): Promise<void> {
-  // Get friend first to read preferred delivery hour from metadata
+  // Atomic claim: prevent duplicate delivery when cron runs concurrently.
+  // Only proceed if we can atomically push next_delivery_at into the future.
+  const now = jstNow();
+  const claimUntil = new Date(Date.now() + 9 * 60 * 60_000 + 60 * 60_000) // JST + 1hr buffer
+    .toISOString()
+    .slice(0, -1) + '+09:00';
+  const claim = await db
+    .prepare(
+      `UPDATE friend_scenarios
+       SET next_delivery_at = ?
+       WHERE id = ?
+         AND status = 'active'
+         AND next_delivery_at IS NOT NULL
+         AND next_delivery_at <= ?`,
+    )
+    .bind(claimUntil, fs.id, now)
+    .run();
+  if (claim.meta.changes === 0) {
+    // Another cron instance already claimed this record
+    return;
+  }
+
+  // Get friend and look up the correct LINE account token for this friend
+  const friendWithToken = await db
+    .prepare(
+      `SELECT f.*, la.channel_access_token as account_token
+       FROM friends f
+       LEFT JOIN line_accounts la ON la.id = f.line_account_id
+       WHERE f.id = ?`,
+    )
+    .bind(fs.friend_id)
+    .first<{ id: string; line_user_id: string; display_name: string | null; user_id: string | null; ref_code?: string | null; is_following: number; metadata?: string; account_token?: string }>();
+
   const friend = await getFriendById(db, fs.friend_id);
   if (!friend || !friend.is_following) {
     await completeFriendScenario(db, fs.id);
+    return;
+  }
+
+  // Use the account-specific token; fall back to the passed client if unavailable
+  const lineClient = friendWithToken?.account_token
+    ? new LineClient(friendWithToken.account_token)
+    : null;
+  if (!lineClient) {
+    console.error(`No LINE token found for friend ${fs.friend_id}, skipping`);
     return;
   }
   const metadata = JSON.parse((friend as { metadata?: string }).metadata || '{}') as Record<string, unknown>;

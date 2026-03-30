@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import type { Tag } from '@line-crm/shared'
 import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
@@ -84,6 +85,23 @@ const initialForm: CreateFormState = {
   priority: 0,
 }
 
+/** EC タグ自動設定プリセット */
+const EC_TAG_PRESETS: {
+  label: string
+  icon: string
+  cvEventType: string
+  description: string
+  tagSuggestion: string
+}[] = [
+  { label: '購入完了', icon: '🛒', cvEventType: 'purchase', description: '購入完了時に自動でタグを付与', tagSuggestion: 'EC購入済み' },
+  { label: '商品閲覧', icon: '👁', cvEventType: 'product_view', description: '商品ページを閲覧した時にタグを付与', tagSuggestion: '高関心ユーザー' },
+  { label: 'カート追加', icon: '🛍', cvEventType: 'add_to_cart', description: 'カートに商品を追加した時にタグを付与', tagSuggestion: 'カート追加済み' },
+  { label: 'チェックアウト開始', icon: '💳', cvEventType: 'checkout_start', description: 'チェックアウト開始時にタグを付与', tagSuggestion: '購入検討中' },
+  { label: 'クーポン使用', icon: '🎟', cvEventType: 'coupon_used', description: 'クーポンを使用した時にタグを付与', tagSuggestion: 'クーポン使用済み' },
+  { label: 'フォーム回答', icon: '📋', cvEventType: 'form_submit', description: 'フォームを回答した時にタグを付与', tagSuggestion: 'フォーム回答済み' },
+  { label: 'LINE友だち追加', icon: '➕', cvEventType: 'friend_add', description: 'LINE友だち追加時にタグを付与（CV計測経由）', tagSuggestion: '新規友だち' },
+]
+
 /** switch_rich_menu アクション用プリセット */
 const RICH_MENU_ACTION_PRESETS = [
   {
@@ -139,6 +157,9 @@ export default function AutomationsPage() {
   const [formError, setFormError] = useState('')
   const [richMenus, setRichMenus] = useState<RichMenuEntry[]>([])
   const [selectedPresetIdx, setSelectedPresetIdx] = useState<number | null>(null)
+  const [allTags, setAllTags] = useState<Tag[]>([])
+  const [ecPresetIdx, setEcPresetIdx] = useState<number | null>(null)
+  const [ecPresetTagId, setEcPresetTagId] = useState<string>('')
 
   const loadAutomations = useCallback(async () => {
     setLoading(true)
@@ -160,6 +181,11 @@ export default function AutomationsPage() {
   useEffect(() => {
     loadAutomations()
   }, [loadAutomations])
+
+  // タグ一覧を取得（ECプリセットのタグ選択用）
+  useEffect(() => {
+    void api.tags.list().then(res => { if (res.success) setAllTags(res.data ?? []) }).catch(() => {})
+  }, [])
 
   // リッチメニュー一覧を取得（switch_rich_menu アクションのセレクト用）
   useEffect(() => {
@@ -237,6 +263,20 @@ export default function AutomationsPage() {
     }
   }
 
+  /** ECプリセット選択時にフォームを自動入力 */
+  const applyEcPreset = (idx: number, tagId: string) => {
+    const preset = EC_TAG_PRESETS[idx]
+    if (!preset || !tagId) return
+    setForm({
+      ...form,
+      name: form.name || `${preset.icon} ${preset.label} → タグ付与`,
+      description: form.description || preset.description,
+      eventType: 'cv_fire',
+      conditionsJson: JSON.stringify({ cv_event_type: preset.cvEventType }, null, 2),
+      actionsJson: JSON.stringify([{ type: 'add_tag', params: { tagId } }], null, 2),
+    })
+  }
+
   return (
     <div>
       <Header
@@ -263,6 +303,61 @@ export default function AutomationsPage() {
       {showCreate && (
         <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-sm font-semibold text-gray-800 mb-4">新規オートメーションを作成</h2>
+
+          {/* ── ECタグ自動設定プリセット ──────────────────────────────────── */}
+          <div className="mb-5 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+            <p className="text-xs font-semibold text-emerald-700 mb-1">🛒 ECタグ自動設定プリセット</p>
+            <p className="text-xs text-emerald-600 mb-3">ECサイトのCV計測と連携してタグを自動付与できます。CVイベントタイプを選択し、付与するタグを指定してください。</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+              {EC_TAG_PRESETS.map((preset, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    setEcPresetIdx(idx)
+                    setEcPresetTagId('')
+                    setSelectedPresetIdx(null)
+                  }}
+                  className={`text-left p-2.5 rounded-lg border text-xs transition-colors ${ecPresetIdx === idx ? 'border-emerald-500 bg-white ring-1 ring-emerald-400' : 'border-emerald-200 bg-white/60 hover:bg-white'}`}
+                >
+                  <span className="text-base">{preset.icon}</span>
+                  <span className="ml-1.5 font-medium text-gray-800">{preset.label}</span>
+                </button>
+              ))}
+            </div>
+            {ecPresetIdx !== null && (
+              <div className="bg-white rounded-lg border border-emerald-200 p-3 space-y-3">
+                <p className="text-xs text-gray-600">
+                  <strong>{EC_TAG_PRESETS[ecPresetIdx].icon} {EC_TAG_PRESETS[ecPresetIdx].label}</strong> が記録されたとき、以下のタグを自動付与します
+                </p>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">付与するタグを選択 <span className="text-red-500">*</span></label>
+                  {allTags.length === 0 ? (
+                    <p className="text-xs text-gray-400">タグが見つかりません。先に「友だち管理」→タグ一覧でタグを作成してください。</p>
+                  ) : (
+                    <select
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      value={ecPresetTagId}
+                      onChange={(e) => {
+                        setEcPresetTagId(e.target.value)
+                        if (e.target.value) applyEcPreset(ecPresetIdx, e.target.value)
+                      }}
+                    >
+                      <option value="">-- タグを選択 --</option>
+                      {allTags.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                {ecPresetTagId && (
+                  <div className="flex items-center gap-2 p-2 bg-emerald-50 rounded-lg text-xs text-emerald-700">
+                    <span>✅ フォームに反映しました。ルール名を確認して「作成」してください。</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* リッチメニュー切替プリセット */}
           <div className="mb-5 p-4 bg-blue-50 rounded-lg border border-blue-100">
@@ -456,10 +551,15 @@ export default function AutomationsPage() {
               )}
 
               {/* Event type badge */}
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${eventTypeBadgeColor[automation.eventType]}`}>
                   {eventTypeLabelMap[automation.eventType]}
                 </span>
+                {automation.eventType === 'cv_fire' && (automation.conditions as Record<string, unknown>).cv_event_type && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                    🛒 {String((automation.conditions as Record<string, unknown>).cv_event_type)}
+                  </span>
+                )}
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                   automation.isActive ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
                 }`}>

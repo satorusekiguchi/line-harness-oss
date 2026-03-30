@@ -12,6 +12,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../index.js';
 import { jstNow } from '@line-crm/db';
+import { fireEvent } from '../services/event-bus.js';
 
 const tracking = new Hono<Env>();
 
@@ -124,6 +125,12 @@ tracking.get('/track', async (c) => {
       affiliateCode: aff ?? null,
       metadata,
     });
+
+    // オートメーションをトリガー（エラーはページロードをブロックしない）
+    void fireEvent(c.env.DB, 'cv_fire', {
+      friendId: friend.id,
+      eventData: { cv_event_type: cp, source: 'pixel', ref, value: val ? Number(val) : undefined },
+    }).catch(e => console.error('/track fireEvent error:', e));
   } catch (err) {
     console.error('/track pixel error:', err);
   }
@@ -167,6 +174,12 @@ tracking.post('/api/track/ec', async (c) => {
       affiliateCode: body.affiliateCode ?? null,
       metadata: meta,
     });
+
+    // オートメーションをトリガー
+    void fireEvent(c.env.DB, 'cv_fire', {
+      friendId: friend.id,
+      eventData: { cv_event_type: body.eventType, source: 'api', value: body.value },
+    }).catch(e => console.error('/api/track/ec fireEvent error:', e));
 
     return c.json({
       success: true,
@@ -239,6 +252,25 @@ tracking.post('/api/track/purchase', async (c) => {
         results.push(id);
       }
     }
+
+    // オートメーションをトリガー（purchase + 必要に応じて coupon_used）
+    void Promise.allSettled([
+      fireEvent(c.env.DB, 'cv_fire', {
+        friendId: friend.id,
+        eventData: {
+          cv_event_type: 'purchase',
+          order_id: body.orderId,
+          revenue: body.amount,
+          source: 'purchase_webhook',
+        },
+      }),
+      ...(body.couponCode ? [
+        fireEvent(c.env.DB, 'cv_fire', {
+          friendId: friend.id,
+          eventData: { cv_event_type: 'coupon_used', coupon_code: body.couponCode, source: 'purchase_webhook' },
+        }),
+      ] : []),
+    ]).catch(e => console.error('/api/track/purchase fireEvent error:', e));
 
     return c.json({
       success: true,

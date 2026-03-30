@@ -175,6 +175,11 @@ function matchConditions(
     if (payload.eventData.tagId !== conditions.tag_id) return false;
   }
 
+  // cv_event_type チェック（ECトラッキングで fireEvent('cv_fire', { eventData: { cv_event_type: 'purchase' } }) と組み合わせて使用）
+  if (conditions.cv_event_type !== undefined && payload.eventData) {
+    if (payload.eventData.cv_event_type !== conditions.cv_event_type) return false;
+  }
+
   return true;
 }
 

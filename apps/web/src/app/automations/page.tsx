@@ -555,9 +555,9 @@ export default function AutomationsPage() {
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${eventTypeBadgeColor[automation.eventType]}`}>
                   {eventTypeLabelMap[automation.eventType]}
                 </span>
-                {automation.eventType === 'cv_fire' && (automation.conditions as Record<string, unknown>).cv_event_type && (
+                {automation.eventType === 'cv_fire' && typeof (automation.conditions as Record<string, unknown>).cv_event_type === 'string' && (
                   <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                    🛒 {String((automation.conditions as Record<string, unknown>).cv_event_type)}
+                    🛒 {(automation.conditions as Record<string, string>).cv_event_type}
                   </span>
                 )}
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${

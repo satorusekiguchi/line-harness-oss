@@ -343,8 +343,10 @@ export async function enrollFriendInScenario(
   }
   const nextDeliveryAt = rawDate.toISOString().slice(0, -1) + '+09:00';
 
-  // current_step_order = -1 means "no step delivered yet"
-  // cron looks for step_order > -1 → finds step 0 correctly
+  // ⚠️ CRITICAL — DO NOT CHANGE THIS VALUE (docs/architecture/KNOWN_ISSUES.md ISSUE-001)
+  // current_step_order MUST be -1 (not 0).
+  // The cron delivery logic uses `step_order > current_step_order` to find the next step.
+  // If set to 0, step0 (step_order=0) will be permanently skipped for every new friend.
   await db
     .prepare(
       `INSERT INTO friend_scenarios (id, friend_id, scenario_id, current_step_order, status, started_at, next_delivery_at, updated_at)

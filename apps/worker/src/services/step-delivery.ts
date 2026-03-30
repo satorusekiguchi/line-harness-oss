@@ -105,8 +105,10 @@ async function processSingleDelivery(
   },
   workerUrl?: string,
 ): Promise<void> {
-  // Atomic claim: prevent duplicate delivery when cron runs concurrently.
-  // Only proceed if we can atomically push next_delivery_at into the future.
+  // ⚠️ CRITICAL — DO NOT REMOVE OR MOVE THIS BLOCK (docs/architecture/KNOWN_ISSUES.md ISSUE-002)
+  // Atomic claim via D1 UPDATE: prevents duplicate delivery when cron spawns multiple instances.
+  // If two instances race here, only the one that gets changes=1 proceeds; the other returns early.
+  // Removing this causes every message to be delivered N times (N = number of active LINE tokens).
   const now = jstNow();
   const claimUntil = new Date(Date.now() + 9 * 60 * 60_000 + 60 * 60_000) // JST + 1hr buffer
     .toISOString()
@@ -123,11 +125,12 @@ async function processSingleDelivery(
     .bind(claimUntil, fs.id, now)
     .run();
   if (claim.meta.changes === 0) {
-    // Another cron instance already claimed this record
-    return;
+    return; // Another cron instance already claimed this record
   }
 
-  // Get friend and look up the correct LINE account token for this friend
+  // ⚠️ CRITICAL — DO NOT USE THE PASSED lineClient DIRECTLY (docs/architecture/KNOWN_ISSUES.md ISSUE-003)
+  // Always look up the correct channel token from line_accounts for THIS friend's account.
+  // Using a foreign token causes LINE API 403 errors in multi-account setups.
   const friendWithToken = await db
     .prepare(
       `SELECT f.*, la.channel_access_token as account_token

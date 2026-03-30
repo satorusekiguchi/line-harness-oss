@@ -142,9 +142,12 @@ async function scheduled(
 
   const defaultClient = new LineClient(env.LINE_CHANNEL_ACCESS_TOKEN);
 
-  // processStepDeliveries is called ONCE — it uses an atomic DB claim per record
-  // and looks up each friend's correct account token internally to prevent
-  // duplicate delivery when multiple tokens share the same DB.
+  // ⚠️ CRITICAL — DO NOT MOVE THIS INTO THE TOKEN LOOP BELOW (docs/architecture/KNOWN_ISSUES.md ISSUE-002)
+  // processStepDeliveries MUST be called exactly ONCE per cron run.
+  // getFriendScenariosDueForDelivery() returns ALL accounts' due scenarios.
+  // Calling it N times (once per token) causes N duplicate deliveries per message.
+  // Internal atomic claim in processSingleDelivery() is the second line of defense,
+  // but calling it once is the primary prevention.
   const jobs: Promise<void>[] = [
     processStepDeliveries(env.DB, defaultClient, env.WORKER_URL),
     checkAccountHealth(env.DB),

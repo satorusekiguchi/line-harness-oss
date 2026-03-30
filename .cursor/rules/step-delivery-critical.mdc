@@ -1,0 +1,103 @@
+---
+description: ステップ配信システムの変更時に必ず適用するルール。重大なバグを防ぐための不変条件を定義する。
+globs:
+  - apps/worker/src/services/step-delivery.ts
+  - apps/worker/src/index.ts
+  - packages/db/src/scenarios.ts
+  - apps/worker/src/routes/webhook.ts
+alwaysApply: false
+---
+
+# ⚠️ ステップ配信システム — 変更禁止ルール
+
+このファイルを変更する前に、以下の不変条件をすべて確認すること。
+詳細は `docs/architecture/step-delivery-invariants.md` を参照。
+
+---
+
+## 絶対に変えてはいけない実装
+
+### 1. `enrollFriendInScenario` の初期値は `-1`（`scenarios.ts`）
+
+```typescript
+// ✅ 正しい — current_step_order = -1
+VALUES (?, ?, ?, -1, 'active', ?, ?, ?)
+
+// ❌ バグ — 0にするとstep0が永久にスキップされる
+VALUES (?, ?, ?, 0, 'active', ?, ?, ?)
+```
+
+**step0がスキップされる理由**: cronは `step_order > current_step_order` で次ステップを探すため、
+`current_step_order=0` の場合 `step_order=0`（step0）が対象外になる。
+
+---
+
+### 2. `processSingleDelivery` は先頭で原子的クレームを取得する（`step-delivery.ts`）
+
+```typescript
+// ✅ 必須：メッセージ送信前にD1への原子的UPDATEでロックを取得
+const claim = await db.prepare(`
+  UPDATE friend_scenarios SET next_delivery_at = ?
+  WHERE id = ? AND status = 'active' AND next_delivery_at <= ?
+`).bind(claimUntil, fs.id, now).run();
+
+if (claim.meta.changes === 0) return; // 他のインスタンスが処理中
+```
+
+**削除・移動禁止**。このクレームを削除すると同一メッセージが複数回送信される。
+（Cloudflare cronは同タイミングで複数インスタンスが起動することがある）
+
+---
+
+### 3. `processStepDeliveries` は `scheduled()` から1回だけ呼ぶ（`index.ts`）
+
+```typescript
+// ✅ 正しい：ループの外で1回だけ
+const jobs = [
+  processStepDeliveries(env.DB, defaultClient, env.WORKER_URL),
+  ...
+];
+
+// ❌ バグ：activeTokensのループ内で呼ぶと重複送信
+for (const token of activeTokens) {
+  jobs.push(processStepDeliveries(...)); // N回呼ばれる = N倍送信
+}
+```
+
+---
+
+### 4. `processSingleDelivery` では友だちのアカウントトークンをDBから取得する（`step-delivery.ts`）
+
+```typescript
+// ✅ 正しい：line_accountsテーブルからトークンを取得してLineClientを生成
+const friendWithToken = await db.prepare(`
+  SELECT f.*, la.channel_access_token as account_token
+  FROM friends f LEFT JOIN line_accounts la ON la.id = f.line_account_id
+  WHERE f.id = ?
+`).bind(fs.friend_id).first();
+
+const lineClient = new LineClient(friendWithToken.account_token);
+
+// ❌ 引数で渡されたlineClientをそのまま使うと別アカウントのトークンで送信してしまう
+```
+
+---
+
+## 変更後の必須チェックリスト
+
+- [ ] `enrollFriendInScenario` の初期 `current_step_order` が `-1` か
+- [ ] `processSingleDelivery` の先頭に原子的クレームUPDATEが残っているか
+- [ ] `scheduled()` 内で `processStepDeliveries` が1回のみ呼ばれているか
+- [ ] `LineClient` が友だちの `line_account_id` から取得したトークンで生成されているか
+
+## 二重送信確認クエリ
+
+```sql
+SELECT friend_id, scenario_step_id, COUNT(*) as cnt
+FROM messages_log
+WHERE scenario_step_id IS NOT NULL
+GROUP BY friend_id, scenario_step_id
+HAVING cnt > 1;
+```
+
+重複があれば不変条件②③の実装を確認する。

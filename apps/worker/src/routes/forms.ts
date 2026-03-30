@@ -256,6 +256,34 @@ forms.post('/api/forms/:id/submit', async (c) => {
         sideEffects.push(enrollFriendInScenario(db, friendId, form.on_submit_scenario_id));
       }
 
+      // CV自動記録: form_submit
+      sideEffects.push(
+        (async () => {
+          try {
+            const cvPoint = await db
+              .prepare(`SELECT id FROM conversion_points WHERE event_type = 'form_submit' LIMIT 1`)
+              .first<{ id: string }>();
+            if (cvPoint && friendId) {
+              await db
+                .prepare(
+                  `INSERT INTO conversion_events (id, conversion_point_id, friend_id, user_id, affiliate_code, metadata, created_at)
+                   VALUES (?, ?, ?, NULL, NULL, ?, ?)`,
+                )
+                .bind(
+                  crypto.randomUUID(),
+                  cvPoint.id,
+                  friendId,
+                  JSON.stringify({ form_id: formId, form_name: form.name, source: 'form_submit' }),
+                  new Date(Date.now() + 9 * 60 * 60_000).toISOString().slice(0, -1) + '+09:00',
+                )
+                .run();
+            }
+          } catch (err) {
+            console.error('CV auto-track form_submit error:', err);
+          }
+        })(),
+      );
+
       // Send confirmation message with submitted data back to user
       sideEffects.push(
         (async () => {

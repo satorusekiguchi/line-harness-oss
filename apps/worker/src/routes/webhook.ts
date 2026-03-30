@@ -174,6 +174,32 @@ async function handleEvent(
 
     // イベントバス発火: friend_add
     await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken, lineAccountId);
+
+    // CV自動記録: friend_add
+    try {
+      const cvPoint = await db
+        .prepare(`SELECT id FROM conversion_points WHERE event_type = 'friend_add' LIMIT 1`)
+        .first<{ id: string }>();
+      if (cvPoint) {
+        await db
+          .prepare(
+            `INSERT INTO conversion_events (id, conversion_point_id, friend_id, user_id, affiliate_code, metadata, created_at)
+             VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            cvPoint.id,
+            friend.id,
+            userId,
+            JSON.stringify({ source: 'webhook', display_name: friend.display_name }),
+            jstNow(),
+          )
+          .run();
+      }
+    } catch (err) {
+      console.error('CV auto-track friend_add error:', err);
+    }
+
     return;
   }
 

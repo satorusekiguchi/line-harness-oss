@@ -17,7 +17,10 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path === '/api/integrations/stripe/webhook' ||
     path.match(/^\/api\/webhooks\/incoming\/[^/]+\/receive$/) ||
     path.match(/^\/api\/forms\/[^/]+\/submit$/) ||
-    path.match(/^\/api\/forms\/[^/]+$/) // GET form definition (public for LIFF)
+    path.match(/^\/api\/forms\/[^/]+$/) || // GET form definition (public for LIFF)
+    path === '/track' || // EC pixel tracking — public, no auth needed
+    path === '/api/track/ec' || // EC JSON tracking — public, uid-based auth
+    path === '/api/track/purchase' // EC purchase webhook — validated by uid
   ) {
     return next();
   }

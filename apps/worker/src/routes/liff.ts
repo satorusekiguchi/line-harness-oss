@@ -77,7 +77,10 @@ liffRoutes.get('/auth/line', async (c) => {
   }
 
   // PC: QR コードページを表示
-  // QR の飛び先は LIFF URL（設定済みの場合）または OAuth URL（未設定の場合）
+  // QR の飛び先の優先順位:
+  //   1. LIFF URL（設定済み）→ LINE アプリが直接開き UUID も取得できる
+  //   2. line.me/R/ti/p/@id（premium/basic ID あり）→ LINE アプリが直接開く（UUID 取得なし）
+  //   3. OAuth URL（フォールバック）→ ブラウザで LINE ログイン
   let qrTarget: string;
   if (liffUrl) {
     const qrParams = new URLSearchParams();
@@ -85,9 +88,10 @@ liffRoutes.get('/auth/line', async (c) => {
     if (uidParam) qrParams.set('uid', uidParam);
     if (accountParam) qrParams.set('account', accountParam);
     qrTarget = qrParams.toString() ? `${liffUrl}?${qrParams.toString()}` : liffUrl;
+  } else if (accountPremiumId || accountBasicId) {
+    // LINE Universal Link: iOS/Android でスキャンすると LINE アプリが直接開く
+    qrTarget = `https://line.me/R/ti/p/${accountPremiumId || accountBasicId}`;
   } else {
-    // LIFF 未設定の場合は OAuth URL を QR にする
-    // スマホでスキャンすると LINE ログイン → 友だち追加の流れになる
     qrTarget = loginUrl.toString();
   }
 

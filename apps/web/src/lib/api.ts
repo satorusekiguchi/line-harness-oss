@@ -24,6 +24,36 @@ import type {
   AccountMigration,
 } from '@line-crm/shared'
 
+export type FormField = {
+  name: string
+  label: string
+  type: 'text' | 'textarea' | 'email' | 'tel' | 'number' | 'select' | 'radio' | 'checkbox'
+  required?: boolean
+  placeholder?: string
+  options?: string[]
+}
+
+export type FormData = {
+  id: string
+  name: string
+  description: string | null
+  fields: FormField[]
+  onSubmitTagId: string | null
+  onSubmitScenarioId: string | null
+  saveToMetadata: boolean
+  isActive: boolean
+  submitCount: number
+  createdAt: string
+}
+
+export type FormSubmissionData = {
+  id: string
+  formId: string
+  friendId: string | null
+  data: Record<string, unknown>
+  createdAt: string
+}
+
 import type { Broadcast } from '@line-crm/shared'
 
 /** Broadcast type from API (now camelCase after worker serialization) */
@@ -508,6 +538,26 @@ export const api = {
       const query = params?.accountId ? '?lineAccountId=' + params.accountId : ''
       return fetchApi<ApiResponse<null>>(`/api/friends/${friendId}/rich-menu` + query, { method: 'DELETE' })
     },
+  },
+  forms: {
+    list: () =>
+      fetchApi<ApiResponse<FormData[]>>('/api/forms'),
+    get: (id: string) =>
+      fetchApi<ApiResponse<FormData>>(`/api/forms/${id}`),
+    create: (data: { name: string; description?: string | null; fields?: FormField[]; onSubmitTagId?: string | null; onSubmitScenarioId?: string | null; saveToMetadata?: boolean }) =>
+      fetchApi<ApiResponse<FormData>>('/api/forms', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: Partial<{ name: string; description: string | null; fields: FormField[]; onSubmitTagId: string | null; onSubmitScenarioId: string | null; saveToMetadata: boolean; isActive: boolean }>) =>
+      fetchApi<ApiResponse<FormData>>(`/api/forms/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/forms/${id}`, { method: 'DELETE' }),
+    submissions: (id: string) =>
+      fetchApi<ApiResponse<FormSubmissionData[]>>(`/api/forms/${id}/submissions`),
   },
   health: {
     accounts: () =>
